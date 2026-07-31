@@ -109,8 +109,8 @@ The package is arm64-only. Older macOS and Metal versions are not supported.
 ### Prompting the model
 
 Use the loopback OpenAI-compatible server for applications and the CLI for
-interactive terminal work or reproducible runs. Both apply the pinned Gemma 4
-chat format.
+interactive terminal work or reproducible runs. They derive the prompt dialect
+from the installed model: Gemma's turn format or Qwen's ChatML format.
 
 Generation defaults to temperature `0.2`, Top-K `64`, and Top-P `0.95`. Set
 temperature to `0` for deterministic greedy output. The model can still repeat
@@ -131,8 +131,10 @@ swift build -c release
 ```
 
 Build the complete package so the app and its sibling server are both
-available. When launched from this checkout, the app stores the model in
-`scratch/gemma4.gturbo`.
+available. When launched from this checkout, the app stores Gemma in
+`scratch/gemma4.gturbo` or Qwen in `scratch/qwen36.gturbo`. Gemma remains the
+upstream-compatible default; set `TURBO_FIELDFARE_MODEL=qwen36` or run
+`defaults write TurboFieldfare model qwen36` before launch to select Qwen.
 
 To create a drag-to-Applications disk image:
 
@@ -155,11 +157,11 @@ required byte ranges from the pinned Hugging Face revision and repacks them
 directly into the `.gturbo` layout as they arrive. This avoids a second full
 checkpoint on disk and keeps scratch memory bounded.
 
-The first installation transfers about 15 GB through bounded Hugging Face
-range requests. Network speed and Hugging Face response times vary, so it can
-take a while. The completed `.gturbo` installation occupies about 14.3 GB and
-is accepted only after its manifest and file hashes have been validated.
-Installation does not load the model into memory.
+The first installation transfers about 15 GB for Gemma or 19.5 GB for Qwen
+through bounded Hugging Face range requests. Network speed and Hugging Face
+response times vary, so it can take a while. The completed `.gturbo`
+installation is accepted only after its manifest and file hashes have been
+validated. Installation does not load the model into memory.
 
 #### Start the local server
 
@@ -345,8 +347,8 @@ TurboFieldfare currently includes:
   OpenAI-compatible server, and native SwiftUI/AppKit installer and server
   launcher
 
-Current scope is text-only inference from the pinned Gemma 4 26B-A4B
-instruction checkpoint on Apple Silicon Macs with at least 8 GB of RAM.
+Current scope is text-only inference from the explicitly pinned Gemma 4
+26B-A4B and Qwen 3.6 35B-A3B instruction checkpoints on Apple Silicon Macs.
 
 ### Qwen 3.6 35B-A3B
 
