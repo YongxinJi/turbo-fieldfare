@@ -233,12 +233,12 @@ flowchart LR
 
 ## Instruction framing
 
-The Mac app and CLI `--messages-file` mode use the pinned text-only Gemma 4 chat
-format. The app wraps one user prompt. `--messages-file` accepts user and
-assistant messages plus optional leading system guidance. Assistant messages
-render with Gemma's `model` role. The separate loopback server uses the pinned
-upstream Jinja template for developer messages, function declarations,
-assistant tool calls, and tool results.
+CLI `--messages-file` mode uses the pinned text-only Gemma 4 chat format. It
+accepts user and assistant messages plus optional leading system guidance.
+Assistant messages render with Gemma's `model` role. The loopback server uses
+the pinned upstream Jinja template for developer messages, function
+declarations, assistant tool calls, and tool results. The Mac app installs the
+model and launches that server; it does not frame prompts itself.
 
 The runtime stops generation on `<eos>` (token 1), `<turn|>` (token 106), or
 `<|tool_response>` (token 50). The app and CLI treat the third token as a
@@ -444,22 +444,30 @@ needs about 19.6 GB of disk against Gemma's 14.3 GB. Acceptance evidence covers
 4K context. See [Qwen 3.6 performance notes](QWEN36_PERFORMANCE.md) and
 [Benchmarks](BENCHMARKS.md#qwen-36-35b-a3b-measured-decode).
 
-The Mac app offers 4K, 8K, 16K, 32K, and 64K context lengths. Published app
-and CLI acceptance evidence covers up to 4K. Vision input, training,
-fine-tuning, server batching, remote serving, and general model support are
-outside the current scope. The runtime supports the two architectures above by
-explicit enumeration — each with its own pinned checkpoint, compile-time
-baseline, and manifest contract — rather than by discovering arbitrary
-checkpoints. The optional HTTP server is loopback-only, owns one
-warm model, serializes generation, and retains one verified conversational KV
-prefix by default. It retains only that prefix. See the
+The standalone CLI and server support 4K, 8K, 16K, 32K, and 64K context
+lengths. The Mac launcher exposes those supported sizes and persists the
+selection with its other server settings. Published app and CLI acceptance
+evidence covers up to 4K. Vision input, training, fine-tuning, server batching,
+remote serving, and general model support are outside the current scope. The
+runtime supports the two architectures above by explicit enumeration, each
+with its own pinned checkpoint, compile-time baseline, and manifest contract,
+rather than by discovering arbitrary checkpoints. The HTTP server is
+loopback-only, owns one warm model, serializes generation, and retains one
+verified conversational KV prefix by default. It retains only that prefix. See the
 [local server guide](OPENAI_SERVER.md).
 
-TurboFieldfare is a research system. The Mac app exposes a small set of typed
-runtime controls. The production path uses FP16 KV, exact split-K/V
-attention, a 16-slot LFU expert cache, chunked prefill, staged affine MPP
-prefill, and batched routed MoE prefill. File-read advice (`RDADVISE`) is off by
-default.
+The Mac app supplies an app-generated Bearer key through the child-process
+environment. The unauthenticated health endpoint exposes current Server RSS and
+the most recent completed decode rate for the app's menu-bar telemetry; model
+and completion endpoints enforce the key when configured.
+
+TurboFieldfare is a research system. The Mac app exposes the supported
+production controls for context length, expert-cache slots, sampling defaults,
+chunked prefill, and file-read advice. It does not expose experimental kernels
+or profiling modes. The default path uses FP16 KV, exact split-K/V attention, a
+16-slot LFU expert cache, chunked prefill, staged affine MPP prefill, and batched
+routed MoE prefill. File-read advice (`RDADVISE`) is off by default. Explicit
+API sampling values override the app-selected defaults.
 
 ## Read next
 

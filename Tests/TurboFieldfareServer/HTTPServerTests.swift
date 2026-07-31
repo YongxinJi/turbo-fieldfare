@@ -24,7 +24,8 @@ private actor ScriptedServerBackend: ServerInferenceBackend {
             content: "hello",
             toolCalls: [],
             finishReason: "stop",
-            usage: OpenAIUsage(promptTokens: 3, completionTokens: 1, totalTokens: 4))
+            usage: OpenAIUsage(promptTokens: 3, completionTokens: 1, totalTokens: 4),
+            decodeTokensPerSecond: 12.5)
     }
 }
 
@@ -135,7 +136,10 @@ struct HTTPServerTests {
 
         let health = try await URLSession.shared.data(
             from: URL(string: "http://127.0.0.1:\(port)/health")!).0
-        #expect(String(decoding: health, as: UTF8.self).contains(#""status":"ok""#))
+        let healthObject = try #require(
+            JSONSerialization.jsonObject(with: health) as? [String: Any])
+        #expect(healthObject["status"] as? String == "ok")
+        #expect((healthObject["rss_bytes"] as? NSNumber)?.uint64Value ?? 0 > 0)
 
         let models = try await URLSession.shared.data(
             from: URL(string: "http://127.0.0.1:\(port)/v1/models")!).0
@@ -158,6 +162,45 @@ struct HTTPServerTests {
         let usage = try #require(object["usage"] as? [String: Any])
         let details = try #require(usage["prompt_tokens_details"] as? [String: Any])
         #expect(details["cached_tokens"] as? Int == 0)
+
+        let updatedHealth = try await URLSession.shared.data(
+            from: URL(string: "http://127.0.0.1:\(port)/health")!).0
+        let updatedHealthObject = try #require(
+            JSONSerialization.jsonObject(with: updatedHealth) as? [String: Any])
+        #expect((updatedHealthObject["tokens_per_second"] as? NSNumber)?.doubleValue == 12.5)
+
+        try await server.shutdown()
+    }
+
+    @Test func apiKeyProtectsOpenAIEndpointsButNotHealth() async throws {
+        let server = TurboFieldfareHTTPServer(
+            modelID: "test-model",
+            queueLimit: 1,
+            backend: ScriptedServerBackend(),
+            apiKey: "test-secret")
+        let channel = try await server.start(port: 0)
+        let port = try #require(channel.localAddress?.port)
+        let healthURL = URL(string: "http://127.0.0.1:\(port)/health")!
+        let modelsURL = URL(string: "http://127.0.0.1:\(port)/v1/models")!
+
+        let (_, healthResponse) = try await URLSession.shared.data(from: healthURL)
+        #expect((healthResponse as? HTTPURLResponse)?.statusCode == 200)
+
+        let (unauthorizedData, unauthorizedResponse) =
+            try await URLSession.shared.data(from: modelsURL)
+        #expect((unauthorizedResponse as? HTTPURLResponse)?.statusCode == 401)
+        #expect(
+            String(decoding: unauthorizedData, as: UTF8.self)
+                .contains("invalid_api_key"))
+
+        var authorizedRequest = URLRequest(url: modelsURL)
+        authorizedRequest.setValue(
+            "Bearer test-secret",
+            forHTTPHeaderField: "authorization")
+        let (authorizedData, authorizedResponse) =
+            try await URLSession.shared.data(for: authorizedRequest)
+        #expect((authorizedResponse as? HTTPURLResponse)?.statusCode == 200)
+        #expect(String(decoding: authorizedData, as: UTF8.self).contains("test-model"))
 
         try await server.shutdown()
     }

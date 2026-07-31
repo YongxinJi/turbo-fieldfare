@@ -13,6 +13,51 @@ struct MacAppSettings: Codable, Equatable, Sendable {
     var topPEnabled: Bool = true
     var topP: Double = 0.95
     var prefillEnabled: Bool = true
+    var rdadvisePolicy: AppRDAdvicePolicy = .off
+    var apiKey: String = ""
+
+    init(
+        version: Int = currentVersion,
+        contextTokens: Int = AppContextLengthOption.fourK.tokens,
+        expertCacheSlots: Int = 16,
+        temperature: Double = 0.2,
+        topKEnabled: Bool = true,
+        topK: Int = 64,
+        topPEnabled: Bool = true,
+        topP: Double = 0.95,
+        prefillEnabled: Bool = true,
+        rdadvisePolicy: AppRDAdvicePolicy = .off,
+        apiKey: String = ""
+    ) {
+        self.version = version
+        self.contextTokens = contextTokens
+        self.expertCacheSlots = expertCacheSlots
+        self.temperature = temperature
+        self.topKEnabled = topKEnabled
+        self.topK = topK
+        self.topPEnabled = topPEnabled
+        self.topP = topP
+        self.prefillEnabled = prefillEnabled
+        self.rdadvisePolicy = rdadvisePolicy
+        self.apiKey = apiKey
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        version = try values.decode(Int.self, forKey: .version)
+        contextTokens = try values.decode(Int.self, forKey: .contextTokens)
+        expertCacheSlots = try values.decode(Int.self, forKey: .expertCacheSlots)
+        temperature = try values.decode(Double.self, forKey: .temperature)
+        topKEnabled = try values.decode(Bool.self, forKey: .topKEnabled)
+        topK = try values.decode(Int.self, forKey: .topK)
+        topPEnabled = try values.decode(Bool.self, forKey: .topPEnabled)
+        topP = try values.decode(Double.self, forKey: .topP)
+        prefillEnabled = try values.decode(Bool.self, forKey: .prefillEnabled)
+        rdadvisePolicy = try values.decodeIfPresent(
+            AppRDAdvicePolicy.self,
+            forKey: .rdadvisePolicy) ?? .off
+        apiKey = try values.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+    }
 
     func isValid() -> Bool {
         version == Self.currentVersion
@@ -21,6 +66,7 @@ struct MacAppSettings: Codable, Equatable, Sendable {
             && temperature.isFinite && (0...2).contains(temperature)
             && (1...256).contains(topK)
             && topP.isFinite && (0.01...1).contains(topP)
+            && (apiKey.isEmpty || apiKey.utf8.count >= 32)
     }
 }
 
@@ -37,15 +83,26 @@ enum MacAppSettingsFileStore {
         if fileManager.fileExists(atPath: fileURL.path) {
             do {
                 let data = try Data(contentsOf: fileURL)
-                let settings = try JSONDecoder().decode(MacAppSettings.self, from: data)
+                var settings = try JSONDecoder().decode(MacAppSettings.self, from: data)
                 guard settings.isValid() else { throw InvalidSettings() }
+                if settings.apiKey.isEmpty {
+                    settings.apiKey = makeAPIKey()
+                    try save(
+                        settings,
+                        forModelDirectory: modelDirectory,
+                        fileManager: fileManager)
+                } else {
+                    try fileManager.setAttributes(
+                        [.posixPermissions: 0o600],
+                        ofItemAtPath: fileURL.path)
+                }
                 return settings
             } catch {
                 try? fileManager.removeItem(at: fileURL)
             }
         }
 
-        let settings = MacAppSettings()
+        let settings = MacAppSettings(apiKey: makeAPIKey())
         try? save(settings, forModelDirectory: modelDirectory, fileManager: fileManager)
         return settings
     }
@@ -63,6 +120,15 @@ enum MacAppSettingsFileStore {
         var data = try encoder.encode(settings)
         data.append(0x0A)
         try data.write(to: fileURL, options: .atomic)
+        try fileManager.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: fileURL.path)
+    }
+
+    static func makeAPIKey() -> String {
+        (UUID().uuidString + UUID().uuidString)
+            .replacingOccurrences(of: "-", with: "")
+            .lowercased()
     }
 
     private struct InvalidSettings: Error {}

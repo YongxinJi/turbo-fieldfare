@@ -23,6 +23,7 @@ public final class AppModel {
     public var topK: Int = 64
     public var topPEnabled: Bool = true
     public var topP: Double = 0.95
+    public var apiKey: String
     public var diagnostics: AppDiagnostics?
     public var error: AppInferenceError?
     public var installState: AppModelInstallState = .idle
@@ -72,7 +73,9 @@ public final class AppModel {
         self.modelPathText = directory.path
         self.runtimeOptions = AppRuntimeOptions(
             expertCacheSlots: settings.expertCacheSlots,
-            prefillEnabled: settings.prefillEnabled)
+            prefillEnabled: settings.prefillEnabled,
+            rdadvisePolicy: settings.rdadvisePolicy)
+        self.apiKey = settings.apiKey
         self.maxContextTokens = settings.contextTokens
         self.temperature = settings.temperature
         self.topKEnabled = settings.topKEnabled
@@ -605,16 +608,18 @@ public final class AppModel {
             forModelDirectory: modelDirectory)
         runtimeOptions = AppRuntimeOptions(
             expertCacheSlots: settings.expertCacheSlots,
-            prefillEnabled: settings.prefillEnabled)
+            prefillEnabled: settings.prefillEnabled,
+            rdadvisePolicy: settings.rdadvisePolicy)
         maxContextTokens = settings.contextTokens
         temperature = settings.temperature
         topKEnabled = settings.topKEnabled
         topK = settings.topK
         topPEnabled = settings.topPEnabled
         topP = settings.topP
+        apiKey = settings.apiKey
     }
 
-    private func persistSettings() {
+    public func saveSettings() {
         guard settingsPersistenceEnabled else { return }
         let settings = MacAppSettings(
             contextTokens: maxContextTokens,
@@ -624,11 +629,18 @@ public final class AppModel {
             topK: topK,
             topPEnabled: topPEnabled,
             topP: topP,
-            prefillEnabled: runtimeOptions.prefillEnabled)
+            prefillEnabled: runtimeOptions.prefillEnabled,
+            rdadvisePolicy: runtimeOptions.rdadvisePolicy,
+            apiKey: apiKey)
         let modelDirectory = URL(fileURLWithPath: modelPathText, isDirectory: true)
         try? MacAppSettingsFileStore.save(
             settings,
             forModelDirectory: modelDirectory)
+    }
+
+    public func rotateAPIKey() {
+        apiKey = MacAppSettingsFileStore.makeAPIKey()
+        saveSettings()
     }
 
     private func finishInstallFailure(_ error: Error, generation: UInt64) {
@@ -702,7 +714,7 @@ public final class AppModel {
             self.error = appError
             return
         }
-        persistSettings()
+        saveSettings()
 
         generationTranscriptMailbox?.reset()
         outputPromptText = request.prompt

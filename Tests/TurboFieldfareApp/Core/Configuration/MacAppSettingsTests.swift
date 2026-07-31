@@ -18,12 +18,14 @@ import Testing
         let settings = MacAppSettingsFileStore.loadOrCreate(forModelDirectory: model)
         let fileURL = MacAppSettingsFileStore.fileURL(forModelDirectory: model)
 
-        #expect(settings == MacAppSettings())
+        #expect(settings.apiKey.count == 64)
         #expect(FileManager.default.fileExists(atPath: fileURL.path))
         let decoded = try JSONDecoder().decode(
             MacAppSettings.self,
             from: Data(contentsOf: fileURL))
-        #expect(decoded == MacAppSettings())
+        #expect(decoded == settings)
+        let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+        #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
     }
 
     @Test func malformedFileIsReplacedWithDefaults() throws {
@@ -35,11 +37,11 @@ import Testing
 
         let settings = MacAppSettingsFileStore.loadOrCreate(forModelDirectory: model)
 
-        #expect(settings == MacAppSettings())
+        #expect(settings.apiKey.count == 64)
         let decoded = try JSONDecoder().decode(
             MacAppSettings.self,
             from: Data(contentsOf: fileURL))
-        #expect(decoded == MacAppSettings())
+        #expect(decoded == settings)
     }
 
     @Test func invalidValuesAreReplacedWithDefaults() throws {
@@ -52,7 +54,7 @@ import Testing
 
         let settings = MacAppSettingsFileStore.loadOrCreate(forModelDirectory: model)
 
-        #expect(settings == MacAppSettings())
+        #expect(settings.apiKey.count == 64)
     }
 
     @MainActor
@@ -71,7 +73,9 @@ import Testing
             topK: 32,
             topPEnabled: false,
             topP: 0.8,
-            prefillEnabled: false)
+            prefillEnabled: false,
+            rdadvisePolicy: .bounded,
+            apiKey: String(repeating: "a", count: 64))
         try MacAppSettingsFileStore.save(initial, forModelDirectory: modelDirectory)
 
         let model = AppModel(
@@ -85,10 +89,13 @@ import Testing
         #expect(!model.topPEnabled)
         #expect(model.topP == 0.8)
         #expect(!model.runtimeOptions.prefillEnabled)
+        #expect(model.runtimeOptions.rdadvisePolicy == .bounded)
+        #expect(model.apiKey == initial.apiKey)
 
         model.temperature = 0.6
         model.runtimeOptions.expertCacheSlots = 32
         model.runtimeOptions.prefillEnabled = true
+        model.runtimeOptions.rdadvisePolicy = .adaptive
         let beforeGenerate = MacAppSettingsFileStore.loadOrCreate(
             forModelDirectory: modelDirectory)
         #expect(beforeGenerate == initial)
@@ -101,7 +108,37 @@ import Testing
         #expect(saved.temperature == 0.6)
         #expect(saved.expertCacheSlots == 32)
         #expect(saved.prefillEnabled)
+        #expect(saved.rdadvisePolicy == .adaptive)
+
+        let previousKey = model.apiKey
+        model.rotateAPIKey()
+        let rotated = MacAppSettingsFileStore.loadOrCreate(
+            forModelDirectory: modelDirectory)
+        #expect(rotated.apiKey.count == 64)
+        #expect(rotated.apiKey != previousKey)
         model.cancel()
+    }
+
+    @Test func legacySettingsDefaultRDADVISEToOff() throws {
+        let data = Data(#"""
+        {
+          "version": 1,
+          "contextTokens": 4096,
+          "expertCacheSlots": 16,
+          "temperature": 0.2,
+          "topKEnabled": true,
+          "topK": 64,
+          "topPEnabled": true,
+          "topP": 0.95,
+          "prefillEnabled": true
+        }
+        """#.utf8)
+
+        let settings = try JSONDecoder().decode(MacAppSettings.self, from: data)
+
+        #expect(settings.rdadvisePolicy == .off)
+        #expect(settings.apiKey.isEmpty)
+        #expect(settings.isValid())
     }
 
     private func makeTemporaryRoot() throws -> URL {

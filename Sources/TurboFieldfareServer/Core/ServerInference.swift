@@ -12,15 +12,18 @@ public struct ServerCompletion: Equatable, Sendable {
     public let toolCalls: [ParsedToolCall]
     public let finishReason: String
     public let usage: OpenAIUsage
+    public let decodeTokensPerSecond: Double?
 
     public init(content: String,
                 toolCalls: [ParsedToolCall],
                 finishReason: String,
-                usage: OpenAIUsage) {
+                usage: OpenAIUsage,
+                decodeTokensPerSecond: Double? = nil) {
         self.content = content
         self.toolCalls = toolCalls
         self.finishReason = finishReason
         self.usage = usage
+        self.decodeTokensPerSecond = decodeTokensPerSecond
     }
 }
 
@@ -128,7 +131,9 @@ public actor ServerModelSession: ServerInferenceBackend {
 
     public static func load(modelDirectory: URL,
                             maxContext: Int,
-                            promptCacheMode: ServerPromptCacheMode = .singlePrefix) async throws -> ServerModelSession {
+                            promptCacheMode: ServerPromptCacheMode = .singlePrefix,
+                            runtimeConfiguration: RuntimeConfiguration = .production)
+        async throws -> ServerModelSession {
         let tokenizerFolder = GFTokenizer.tokenizerFolder(forModelDirectory: modelDirectory)
         guard let tokenizerFolder else {
             throw GFTokenizerError.missingToolTemplate
@@ -139,7 +144,14 @@ public actor ServerModelSession: ServerInferenceBackend {
         }
         let tokenizer = try await GFTokenizer.load(from: tokenizerFolder)
         let context = try MetalContext()
-        let runtime = RuntimeConfiguration(forceLogitsHead: true)
+        let runtime = RuntimeConfiguration(
+            expertCacheSlots: runtimeConfiguration.expertCacheSlots,
+            expertCachePolicy: runtimeConfiguration.expertCachePolicy,
+            rdadvisePolicy: runtimeConfiguration.rdadvisePolicy,
+            prefillEnabled: runtimeConfiguration.prefillPolicy == .chunked,
+            prefillChunkTokens: runtimeConfiguration.prefillChunkTokens,
+            prefillAttentionPath: runtimeConfiguration.prefillAttentionPath,
+            forceLogitsHead: true)
         let model = try Model.load(
             directoryURL: modelDirectory,
             device: context.device,
@@ -363,6 +375,9 @@ public actor ServerModelSession: ServerInferenceBackend {
             usage: OpenAIUsage(promptTokens: result.prefillTokens,
                                completionTokens: result.newTokens,
                                totalTokens: result.prefillTokens + result.newTokens,
-                               cachedTokens: result.cachedPromptTokens))
+                               cachedTokens: result.cachedPromptTokens),
+            decodeTokensPerSecond: result.decodeSeconds > 0
+                ? Double(result.newTokens) / result.decodeSeconds
+                : nil)
     }
 }

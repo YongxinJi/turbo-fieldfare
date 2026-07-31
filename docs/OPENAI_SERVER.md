@@ -4,7 +4,37 @@
 model. It binds to `127.0.0.1` without authentication or TLS. Do not expose it
 through a proxy or tunnel.
 
-## Start the server
+## Start with the Mac app
+
+The Mac app installs the model and then starts the bundled server automatically.
+It shows the endpoint, model-loading state, readiness, and launch errors. Closing
+the app stops only the server process that app instance launched. The bundled
+server also exits if its owning app process ends unexpectedly.
+
+The server screen exposes context length, expert-cache slots, temperature,
+Top-K, Top-P, chunked prefill, and RDADVISE. The app persists these values next
+to the installed model. Use **Apply & Restart** after changing them. Context,
+cache, prefill, and RDADVISE are applied when the model reloads. Temperature,
+Top-K, and Top-P are request defaults: explicit request fields override the app
+values.
+
+The app also generates a Bearer API key and keeps its settings file readable
+only by the current user. Copy the key from the configuration card or the
+menu-bar menu. The menu-bar label shows the Server RSS and the latest completed
+request's decode rate; its menu can reopen the window, copy connection values,
+and start or stop the server.
+
+Build and run it from a checkout:
+
+```bash
+swift build -c release
+.build/release/TurboFieldfareMac
+```
+
+For a drag-to-Applications build, run `Scripts/package_dmg.sh` and open
+`dist/TurboFieldfare.dmg`.
+
+## Start the server manually
 
 First, install the model with the Mac app or `TurboFieldfareRepack`. Then check
 that no other TurboFieldfare model process is running:
@@ -23,6 +53,14 @@ swift build -c release --product TurboFieldfareServer
   --max-context 16384
 ```
 
+For an authenticated headless launch, set the key in the process environment:
+
+```bash
+TURBOFIELDFARE_API_KEY='replace-with-a-long-random-key' \
+  .build/release/TurboFieldfareServer \
+  --model scratch/gemma4.gturbo
+```
+
 The server loads the model before opening the port. Wait for
 `TurboFieldfareServer ready`, then keep the process running while clients use
 it.
@@ -31,8 +69,10 @@ Check the server from another terminal:
 
 ```bash
 curl --silent --show-error http://127.0.0.1:8080/health
-curl --silent --show-error http://127.0.0.1:8080/v1/models
+curl --silent --show-error http://127.0.0.1:8080/v1/models \
+  -H "Authorization: Bearer $TURBOFIELDFARE_API_KEY"
 curl --silent --show-error http://127.0.0.1:8080/v1/chat/completions \
+  -H "Authorization: Bearer $TURBOFIELDFARE_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "gemma-4-26b-a4b-it",
@@ -43,19 +83,29 @@ curl --silent --show-error http://127.0.0.1:8080/v1/chat/completions \
 ```
 
 By default, the server runs one generation and queues up to four requests. Use
-`--queue-limit` to change the queue size. Press Control-C to stop the server.
+`--queue-limit` to change the queue size. Server launch options also include
+`--default-temperature`, `--default-top-k`, `--default-top-p`,
+`--expert-cache-slots`, `--prefill`, `--prefill-chunk-tokens`, and
+`--rdadvise`. Run `TurboFieldfareServer --help` for the accepted values. Press
+Control-C to stop the server.
 
 ## Connect a client
 
-The base URL is `http://127.0.0.1:8080/v1`. Some client libraries require an
-API key, but the server ignores it.
+The base URL is `http://127.0.0.1:8080/v1`. A server launched by the Mac app
+requires the generated API key. A headless server requires a key when
+`TURBOFIELDFARE_API_KEY` is non-empty.
 
 Python:
 
 ```python
+import os
+
 from openai import OpenAI
 
-client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="local")
+client = OpenAI(
+    base_url="http://127.0.0.1:8080/v1",
+    api_key=os.environ["TURBOFIELDFARE_API_KEY"],
+)
 response = client.chat.completions.create(
     model="gemma-4-26b-a4b-it",
     messages=[{"role": "user", "content": "Say hello in one sentence."}],
@@ -74,7 +124,7 @@ OpenCode:
       "name": "TurboFieldfare",
       "options": {
         "baseURL": "http://127.0.0.1:8080/v1",
-        "apiKey": "local"
+        "apiKey": "copy-the-app-api-key-here"
       },
       "models": {
         "gemma-4-26b-a4b-it": {
@@ -123,7 +173,8 @@ to allow calls. Set it to `none` to disable them. The server does not support
 
 Endpoints:
 
-- `GET /health`
+- `GET /health` (unauthenticated; includes `rss_bytes` and
+  `tokens_per_second`)
 - `GET /v1/models`
 - `POST /v1/chat/completions`
 
@@ -135,6 +186,13 @@ Requests may contain system, developer, user, assistant, and tool messages.
 Supported options include `temperature`, `top_p`, `top_k`,
 `repetition_penalty`, `seed`, `stop`, `max_tokens`,
 `max_completion_tokens`, and function-tool fields.
+
+When a request omits `temperature`, `top_k`, or `top_p`, the server uses its
+launch defaults. Explicit request values always take precedence.
+
+`tokens_per_second` is null until a request completes, then reports that
+request's generated-token count divided by its decode time. `rss_bytes` is the
+Server process's current resident set size.
 
 The server supports one model and one choice. It does not support the Responses
 API, legacy Completions, embeddings, multimodal input, structured output,

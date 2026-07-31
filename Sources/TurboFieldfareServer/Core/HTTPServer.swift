@@ -1,3 +1,5 @@
+import Darwin
+import Darwin.Mach
 import Foundation
 import NIOCore
 import NIOHTTP1
@@ -13,6 +15,9 @@ public actor TurboFieldfareHTTPServer {
     private let chatDialect: ChatDialect
     private let backend: any ServerInferenceBackend
     private let coordinator: ServerCoordinator
+    private let samplingDefaults: ServerSamplingDefaults
+    private let apiKey: String?
+    private let telemetry = ServerTelemetry()
     private let heartbeatInterval: TimeAmount
     private let childChannels = ChildChannelRegistry()
     private var channel: Channel?
@@ -22,6 +27,8 @@ public actor TurboFieldfareHTTPServer {
                 queueLimit: Int,
                 backend: any ServerInferenceBackend,
                 chatDialect: ChatDialect = .gemma,
+                samplingDefaults: ServerSamplingDefaults = .production,
+                apiKey: String? = nil,
                 heartbeatInterval: TimeAmount = .seconds(5),
                 group: MultiThreadedEventLoopGroup = .init(numberOfThreads: 1)) {
         self.group = group
@@ -29,6 +36,8 @@ public actor TurboFieldfareHTTPServer {
         self.chatDialect = chatDialect
         self.backend = backend
         self.coordinator = ServerCoordinator(queueLimit: queueLimit)
+        self.samplingDefaults = samplingDefaults
+        self.apiKey = apiKey.flatMap { $0.isEmpty ? nil : $0 }
         self.heartbeatInterval = heartbeatInterval
     }
 
@@ -37,6 +46,9 @@ public actor TurboFieldfareHTTPServer {
         let chatDialect = self.chatDialect
         let backend = self.backend
         let coordinator = self.coordinator
+        let samplingDefaults = self.samplingDefaults
+        let apiKey = self.apiKey
+        let telemetry = self.telemetry
         let heartbeatInterval = self.heartbeatInterval
         let childChannels = self.childChannels
         let bootstrap = ServerBootstrap(group: group)
@@ -53,6 +65,9 @@ public actor TurboFieldfareHTTPServer {
                         chatDialect: chatDialect,
                         backend: backend,
                         coordinator: coordinator,
+                        samplingDefaults: samplingDefaults,
+                        apiKey: apiKey,
+                        telemetry: telemetry,
                         heartbeatInterval: heartbeatInterval,
                         childChannels: childChannels))
                 }
@@ -122,6 +137,9 @@ private final class ServerHTTPHandler: ChannelInboundHandler, @unchecked Sendabl
     private let chatDialect: ChatDialect
     private let backend: any ServerInferenceBackend
     private let coordinator: ServerCoordinator
+    private let samplingDefaults: ServerSamplingDefaults
+    private let apiKey: String?
+    private let telemetry: ServerTelemetry
     private let heartbeatInterval: TimeAmount
     private let childChannels: ChildChannelRegistry
     private var head: HTTPRequestHead?
@@ -133,12 +151,18 @@ private final class ServerHTTPHandler: ChannelInboundHandler, @unchecked Sendabl
          chatDialect: ChatDialect = .gemma,
          backend: any ServerInferenceBackend,
          coordinator: ServerCoordinator,
+         samplingDefaults: ServerSamplingDefaults,
+         apiKey: String?,
+         telemetry: ServerTelemetry,
          heartbeatInterval: TimeAmount,
          childChannels: ChildChannelRegistry) {
         self.modelID = modelID
         self.chatDialect = chatDialect
         self.backend = backend
         self.coordinator = coordinator
+        self.samplingDefaults = samplingDefaults
+        self.apiKey = apiKey
+        self.telemetry = telemetry
         self.heartbeatInterval = heartbeatInterval
         self.childChannels = childChannels
     }
@@ -180,8 +204,9 @@ private final class ServerHTTPHandler: ChannelInboundHandler, @unchecked Sendabl
                        context: ChannelHandlerContext) {
         switch (head.method, head.uri) {
         case (.GET, "/health"):
-            writeJSON(context, status: .ok, object: ["status": "ok"])
+            writeJSON(context, status: .ok, object: telemetry.healthObject())
         case (.GET, "/v1/models"):
+            guard authorize(head, context: context) else { return }
             let response = OpenAIModelList(
                 object: "list",
                 data: [.init(id: modelID,
@@ -190,6 +215,7 @@ private final class ServerHTTPHandler: ChannelInboundHandler, @unchecked Sendabl
                              ownedBy: "turbofieldfare")])
             writeCodable(context, status: .ok, response)
         case (.POST, "/v1/chat/completions"):
+            guard authorize(head, context: context) else { return }
             guard head.headers.first(name: "content-type")?
                 .lowercased().hasPrefix("application/json") == true else {
                 writeError(context, status: .unsupportedMediaType,
@@ -214,8 +240,11 @@ private final class ServerHTTPHandler: ChannelInboundHandler, @unchecked Sendabl
         do {
             let bytes = body.getBytes(at: body.readerIndex, length: body.readableBytes) ?? []
             let decoded = try JSONDecoder().decode(OpenAIChatRequest.self, from: Data(bytes))
-            let request = try OpenAIRequestValidator.validate(decoded, modelID: modelID,
-                                                              dialect: chatDialect)
+            let request = try OpenAIRequestValidator.validate(
+                decoded,
+                modelID: modelID,
+                dialect: chatDialect,
+                defaults: samplingDefaults)
             let responseID = "chatcmpl-" + UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
             let created = Int(Date().timeIntervalSince1970)
             let contextBox = SendableContext(context)
@@ -257,6 +286,7 @@ private final class ServerHTTPHandler: ChannelInboundHandler, @unchecked Sendabl
                             }
                         }
                     }
+                    self.telemetry.record(completion)
                     if request.stream {
                         self.finishStream(contextBox.value,
                                           id: responseID,
@@ -314,6 +344,37 @@ private final class ServerHTTPHandler: ChannelInboundHandler, @unchecked Sendabl
             "usage": usageObject(completion.usage),
         ]
         writeJSON(context, status: .ok, object: object)
+    }
+
+    private func authorize(
+        _ head: HTTPRequestHead,
+        context: ChannelHandlerContext
+    ) -> Bool {
+        guard let apiKey else { return true }
+        let expected = "Bearer \(apiKey)"
+        guard let supplied = head.headers.first(name: "authorization"),
+              Self.constantTimeEqual(supplied, expected) else {
+            writeError(
+                context,
+                status: .unauthorized,
+                OpenAIErrorEnvelope(
+                    message: "invalid or missing API key",
+                    code: "invalid_api_key"))
+            return false
+        }
+        return true
+    }
+
+    private static func constantTimeEqual(_ lhs: String, _ rhs: String) -> Bool {
+        let left = Array(lhs.utf8)
+        let right = Array(rhs.utf8)
+        var difference = left.count ^ right.count
+        for index in 0..<max(left.count, right.count) {
+            difference |= Int(
+                (index < left.count ? left[index] : 0)
+                    ^ (index < right.count ? right[index] : 0))
+        }
+        return difference == 0
     }
 
     private func beginStream(_ context: ChannelHandlerContext) {
@@ -517,6 +578,47 @@ private final class ServerHTTPHandler: ChannelInboundHandler, @unchecked Sendabl
         }
         if !current.isEmpty { result.append(current) }
         return result
+    }
+}
+
+private final class ServerTelemetry: Sendable {
+    private struct State {
+        var decodeTokensPerSecond: Double?
+    }
+
+    private let state = Mutex(State())
+
+    func record(_ completion: ServerCompletion) {
+        state.withLock {
+            $0.decodeTokensPerSecond = completion.decodeTokensPerSecond
+        }
+    }
+
+    func healthObject() -> [String: Any] {
+        let rate = state.withLock { $0.decodeTokensPerSecond }
+        return [
+            "status": "ok",
+            "rss_bytes": Self.currentResidentSetSizeBytes().map { $0 as Any } ?? NSNull(),
+            "tokens_per_second": rate.map { $0 as Any } ?? NSNull(),
+        ]
+    }
+
+    private static func currentResidentSetSizeBytes() -> UInt64? {
+        var info = mach_task_basic_info_data_t()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<mach_task_basic_info_data_t>.size
+                / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: natural_t.self, capacity: Int(count)) {
+                task_info(
+                    mach_task_self_,
+                    task_flavor_t(MACH_TASK_BASIC_INFO),
+                    $0,
+                    &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        return UInt64(info.resident_size)
     }
 }
 

@@ -26,8 +26,6 @@
   <a href="docs/IMPLEMENTATION_REFERENCES.md">References</a>
 </p>
 
-![TurboFieldfare Mac app generating text with Gemma 4 26B-A4B](docs/assets/turbofieldfare-app.webp)
-
 Memory got expensive. So I gave a 26-billion-parameter model a ~2 GB budget.
 
 TurboFieldfare runs the instruction-tuned
@@ -54,11 +52,11 @@ swift build -c release
 
 On the first run, Swift Package Manager downloads and builds the Swift packages
 required by the tokenizer. The complete release build includes the foreground
-Mac app and its sibling decode-service executable.
+Mac app and its sibling OpenAI-compatible server executable.
 
 When the app opens, choose **Download** and let TurboFieldfare fetch and repack
-the pinned model (about 15 GB). Once it is ready, choose **Load Model**, type
-your prompt, and press **Generate**.
+the pinned model (about 15 GB). Once it is ready, the app starts the loopback
+API server automatically and shows its status and endpoint.
 
 ## At a glance
 
@@ -91,8 +89,8 @@ The Swift package exposes six products:
 | Product | Purpose |
 | --- | --- |
 | `TurboFieldfare` | Swift library containing the runtime and Metal kernels |
-| `TurboFieldfareMac` | Native Mac app for installation and generation |
-| `TurboFieldfareDecodeService` | One-shot local model and Metal owner used by the Mac app |
+| `TurboFieldfareMac` | Native model installer and local-server launcher |
+| `TurboFieldfareDecodeService` | One-shot local model and Metal owner retained for focused development and tests |
 | `TurboFieldfareCLI` | Command-line instruction chat and raw completion |
 | `TurboFieldfareServer` | Loopback OpenAI-compatible Chat Completions server |
 | `TurboFieldfareRepack` | Streaming model installer and install verifier |
@@ -110,19 +108,18 @@ The package is arm64-only. Older macOS and Metal versions are not supported.
 
 ### Prompting the model
 
-The Mac app treats what you type as an instruction and handles Gemma's chat
-formatting automatically. Just describe the task and include any context the
-model needs.
+Use the loopback OpenAI-compatible server for applications and the CLI for
+interactive terminal work or reproducible runs. Both apply the pinned Gemma 4
+chat format.
 
 Generation defaults to temperature `0.2`, Top-K `64`, and Top-P `0.95`. Set
 temperature to `0` for deterministic greedy output. The model can still repeat
 itself or give incorrect answers, so check important results.
 
-TurboFieldfare is text-only. The app and CLI support user and model messages
-plus optional system guidance; they do not expose or execute tools. The
-loopback server accepts function-tool declarations and returns
-model-produced tool calls for the client to authorize and execute. Images,
-audio, and video are not supported.
+TurboFieldfare is text-only. The CLI supports user and model messages plus
+optional system guidance. The loopback server accepts function-tool declarations
+and returns model-produced tool calls for the client to authorize and execute.
+Images, audio, and video are not supported.
 
 ### Mac app
 
@@ -133,9 +130,20 @@ swift build -c release
 .build/release/TurboFieldfareMac
 ```
 
-Build the complete package so the app and its sibling decode service are both
+Build the complete package so the app and its sibling server are both
 available. When launched from this checkout, the app stores the model in
 `scratch/gemma4.gturbo`.
+
+To create a drag-to-Applications disk image:
+
+```bash
+Scripts/package_dmg.sh
+open dist/TurboFieldfare.dmg
+```
+
+The default package uses an ad-hoc signature for local validation. Set
+`SIGN_IDENTITY` to a Developer ID Application identity and `NOTARY_PROFILE` to
+an `xcrun notarytool` keychain profile for public distribution.
 
 #### Install the model
 
@@ -153,19 +161,27 @@ take a while. The completed `.gturbo` installation occupies about 14.3 GB and
 is accepted only after its manifest and file hashes have been validated.
 Installation does not load the model into memory.
 
-#### Load and generate
+#### Start the local server
 
-After installation:
+After installation, the app launches `TurboFieldfareServer` automatically. The
+status screen reports model loading, readiness, failures, and the API endpoint
+`http://127.0.0.1:8080/v1`. Closing the app sends `SIGTERM` only to the server
+process it launched. The bundled server also exits if its owning app process
+ends unexpectedly. If a healthy server already owns the endpoint, the app
+reports it without adopting or stopping that process.
 
-1. Choose **Load Model**.
-2. Enter a prompt in the composer.
-3. Choose **Generate**, or press <kbd>Command</kbd>+<kbd>Return</kbd>.
-4. Use the stop button or <kbd>Escape</kbd> to end generation early.
+The status screen also retains the runtime controls from the original app:
+context length, expert-cache slots, temperature, Top-K, Top-P, chunked prefill,
+and RDADVISE. Settings are saved next to the installed model. Context, cache,
+prefill, and RDADVISE changes take effect through **Apply & Restart** because
+they change model loading. Temperature, Top-K, and Top-P become the server's
+defaults; an API request that supplies those fields still overrides them.
 
-The status bar shows generation progress, decode speed, and memory use. Use the
-right pane to configure sampling, context length, expert-cache slots, and
-runtime options. See [Runtime controls](docs/RUNTIME_CONTROLS.md) for details
-and defaults.
+The app generates a Bearer API key, stores the settings file with owner-only
+permissions, and passes the key to the server through its environment rather
+than its command line. Copy the key from the configuration card or menu-bar
+menu. The menu-bar item remains available after closing the main window and
+shows the Server RSS plus the most recent completed request's decode rate.
 
 ### Command-line interface
 
@@ -223,9 +239,8 @@ swift run -c release TurboFieldfareCLI \
   --messages-file messages.json
 ```
 
-This formats messages in the same way as the Mac app. The CLI response limit
-is set with `--max-new`, which defaults to 1,024 tokens. The Mac app can
-generate until the selected context window is full.
+This applies the same pinned Gemma chat format as the server. The CLI response
+limit is set with `--max-new`, which defaults to 1,024 tokens.
 
 #### Raw completion
 
@@ -257,7 +272,8 @@ add `--quiet` to suppress that footer in scripts.
 
 ### Local OpenAI-compatible server
 
-Build the server and point it at an installed model:
+The Mac app is the easiest way to install the model and start the server.
+For a headless checkout, build the server and point it at an installed model:
 
 ```bash
 swift build -c release --product TurboFieldfareServer
@@ -267,8 +283,9 @@ swift build -c release --product TurboFieldfareServer
 
 It listens on `http://127.0.0.1:8080/v1` and supports Chat Completions,
 streaming, function tools, and single-prefix prompt reuse. The client must
-authorize and run every tool call. Keep the server on loopback; it has no
-remote authentication or TLS.
+authorize and run every tool call. The Mac app enables Bearer authentication;
+headless launches can set `TURBOFIELDFARE_API_KEY`. Keep the server on loopback;
+it has no TLS.
 
 See [Local server](docs/OPENAI_SERVER.md) for a test request, Python and
 OpenCode setup, prompt reuse, tool handling, and the supported API subset.
@@ -325,8 +342,8 @@ TurboFieldfare currently includes:
   and linear storage for 5 full-attention layers
 - Exact split-K/V decode attention with distinct normalized K and V paths
 - A Swift library, streaming installer, command-line interface, loopback
-  OpenAI-compatible server, and native SwiftUI/AppKit Mac app with a one-shot
-  local decode service
+  OpenAI-compatible server, and native SwiftUI/AppKit installer and server
+  launcher
 
 Current scope is text-only inference from the pinned Gemma 4 26B-A4B
 instruction checkpoint on Apple Silicon Macs with at least 8 GB of RAM.

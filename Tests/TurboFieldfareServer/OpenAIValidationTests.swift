@@ -24,6 +24,39 @@ struct OpenAIValidationTests {
         #expect(validated.messages[3].toolCallID == "call_0123456789abcdef01234567")
     }
 
+    @Test func serverSamplingDefaultsApplyOnlyWhenRequestOmitsValues() throws {
+        let omitted = try JSONDecoder().decode(
+            OpenAIChatRequest.self,
+            from: Data(#"""
+            {"model":"m","messages":[{"role":"user","content":"x"}]}
+            """#.utf8))
+        let defaults = ServerSamplingDefaults(
+            temperature: 0.4,
+            topK: 32,
+            topP: 0.8)
+        let inherited = try OpenAIRequestValidator.validate(
+            omitted,
+            modelID: "m",
+            defaults: defaults)
+        #expect(inherited.generationConfig.temperature == 0.4)
+        #expect(inherited.generationConfig.topK == 32)
+        #expect(inherited.generationConfig.topP == 0.8)
+
+        let explicit = try JSONDecoder().decode(
+            OpenAIChatRequest.self,
+            from: Data(#"""
+            {"model":"m","messages":[{"role":"user","content":"x"}],
+             "temperature":0,"top_k":16,"top_p":0.7}
+            """#.utf8))
+        let overridden = try OpenAIRequestValidator.validate(
+            explicit,
+            modelID: "m",
+            defaults: defaults)
+        #expect(overridden.generationConfig.temperature == 0)
+        #expect(overridden.generationConfig.topK == 16)
+        #expect(overridden.generationConfig.topP == 0.7)
+    }
+
     @Test func capturedOpenCodePromptFits16KWith4096Completion() async throws {
         let request = try fixture("opencode-1.15.11-tool-result.json")
         let validated = try OpenAIRequestValidator.validate(
@@ -300,6 +333,37 @@ struct ServerArgumentTests {
         #expect(arguments.maxContext == 16_384)
         #expect(arguments.queueLimit == 4)
         #expect(arguments.promptCacheMode == .singlePrefix)
+        #expect(arguments.samplingDefaults == .production)
+        #expect(arguments.expertCacheSlots == 16)
+        #expect(arguments.prefillEnabled)
+        #expect(arguments.prefillChunkTokens == 128)
+        #expect(arguments.rdadvisePolicy == .off)
+        #expect(arguments.runtimeConfiguration == RuntimeConfiguration(
+            forceLogitsHead: true))
+    }
+
+    @Test func parsesAppRuntimeAndSamplingDefaults() throws {
+        let arguments = try ServerArguments.parse([
+            "--model", "model.gturbo",
+            "--default-temperature", "0.4",
+            "--default-top-k", "32",
+            "--default-top-p", "0.8",
+            "--expert-cache-slots", "24",
+            "--prefill", "off",
+            "--prefill-chunk-tokens", "64",
+            "--rdadvise", "adaptive",
+        ])
+        #expect(arguments.samplingDefaults == ServerSamplingDefaults(
+            temperature: 0.4,
+            topK: 32,
+            topP: 0.8))
+        #expect(arguments.expertCacheSlots == 24)
+        #expect(!arguments.prefillEnabled)
+        #expect(arguments.prefillChunkTokens == 64)
+        #expect(arguments.rdadvisePolicy == .adaptive)
+        #expect(arguments.runtimeConfiguration.expertCacheSlots == 24)
+        #expect(arguments.runtimeConfiguration.prefillPolicy == .off)
+        #expect(arguments.runtimeConfiguration.rdadvisePolicy == .adaptive)
     }
 
     @Test func parsesSinglePrefixModeAndRejectsUnknownMode() throws {

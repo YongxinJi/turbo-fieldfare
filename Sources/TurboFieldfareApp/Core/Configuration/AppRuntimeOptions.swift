@@ -1,7 +1,7 @@
 import Foundation
 import TurboFieldfare
 
-public enum AppExpertCachePolicy: String, CaseIterable, Sendable, Identifiable {
+public enum AppExpertCachePolicy: String, CaseIterable, Codable, Sendable, Identifiable {
     case lfu
     case lru
 
@@ -9,7 +9,7 @@ public enum AppExpertCachePolicy: String, CaseIterable, Sendable, Identifiable {
     public var label: String { rawValue.uppercased() }
 }
 
-public enum AppRDAdvicePolicy: String, CaseIterable, Sendable, Identifiable {
+public enum AppRDAdvicePolicy: String, CaseIterable, Codable, Sendable, Identifiable {
     case off
     case `default`
     case bounded

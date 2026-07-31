@@ -67,6 +67,10 @@ public struct AppModelInstallDescriptor: Equatable, Sendable {
         self == .qwen36 ? "qwen36.gturbo" : "gemma4.gturbo"
     }
 
+    public var apiModelID: String {
+        self == .qwen36 ? "qwen3.6-35b-a3b" : "gemma-4-26b-a4b-it"
+    }
+
     /// The descriptor the app products select at launch. Defaults to Gemma 4.
     /// `TURBO_FIELDFARE_MODEL=qwen36` in the environment wins; otherwise the
     /// persisted preference (`defaults write TurboFieldfare model qwen36`)

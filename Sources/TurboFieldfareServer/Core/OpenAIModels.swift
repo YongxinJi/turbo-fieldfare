@@ -251,10 +251,29 @@ public struct ValidatedChatRequest: Sendable {
     public let maximumCompletionTokens: Int
 }
 
+public struct ServerSamplingDefaults: Equatable, Sendable {
+    public static let production = ServerSamplingDefaults(
+        temperature: 0.2,
+        topK: 64,
+        topP: 0.95)
+
+    public let temperature: Float
+    public let topK: Int?
+    public let topP: Float?
+
+    public init(temperature: Float, topK: Int?, topP: Float?) {
+        self.temperature = temperature
+        self.topK = topK
+        self.topP = topP
+    }
+}
+
 public enum OpenAIRequestValidator {
     public static func validate(_ request: OpenAIChatRequest,
                                 modelID: String,
-                                dialect: ChatDialect = .gemma) throws -> ValidatedChatRequest {
+                                dialect: ChatDialect = .gemma,
+                                defaults: ServerSamplingDefaults = .production)
+        throws -> ValidatedChatRequest {
         guard request.model == modelID else { throw ServerRequestError.unknownModel }
         guard request.n == nil || request.n == 1 else {
             throw invalid("only n=1 is supported", "n", "unsupported_value")
@@ -273,19 +292,30 @@ public enum OpenAIRequestValidator {
                           "parallel_tool_calls", "unsupported_value")
         }
 
-        let temperature = request.temperature ?? 0.2
+        let temperature = request.temperature ?? defaults.temperature
         guard temperature >= 0, temperature <= 2 else {
             throw invalid("temperature must be between 0 and 2",
                           "temperature", "invalid_value")
         }
-        let topP = request.topP ?? 0.95
-        guard topP > 0, topP <= 1 else {
-            throw invalid("top_p must be greater than 0 and at most 1",
-                          "top_p", "invalid_value")
+        let topP = request.topP ?? defaults.topP
+        if let topP, !(topP > 0 && topP <= 1) {
+            throw invalid(
+                "top_p must be greater than 0 and at most 1",
+                "top_p",
+                "invalid_value")
         }
-        let topK = request.topK ?? 64
-        guard (1...256).contains(topK) else {
-            throw invalid("top_k must be between 1 and 256", "top_k", "invalid_value")
+        let topK = request.topK ?? defaults.topK
+        if let topK, !(1...256).contains(topK) {
+            throw invalid(
+                "top_k must be between 1 and 256",
+                "top_k",
+                "invalid_value")
+        }
+        if temperature > 0, topK == nil, let topP, topP < 1 {
+            throw invalid(
+                "top_p below 1 requires top_k",
+                "top_p",
+                "invalid_value")
         }
         let repetitionPenalty = request.repetitionPenalty ?? 1
         guard repetitionPenalty > 0 else {
