@@ -43,7 +43,9 @@ public final class AppModel {
     public private(set) var isCancellationPending: Bool = false
 
     private let client: any AppInferenceClient
-    private let installer: any AppModelInstallerClient
+    private var installer: any AppModelInstallerClient
+    private let installerFactory: (AppModelInstallDescriptor) -> any AppModelInstallerClient
+    private let modelSelectionPersistence: (AppModelInstallDescriptor) -> Void
     private var runTask: Task<Void, Never>?
     private var loadTask: Task<Void, Never>?
     private var installTask: Task<Void, Never>?
@@ -62,10 +64,18 @@ public final class AppModel {
 
     public init(modelDirectory: URL? = nil,
                 client: any AppInferenceClient = RealInferenceClient(),
-                installer: any AppModelInstallerClient = RepackModelInstallerClient(descriptor: .selected),
+                installer: (any AppModelInstallerClient)? = nil,
+                installerFactory: @escaping (AppModelInstallDescriptor) -> any AppModelInstallerClient = {
+                    RepackModelInstallerClient(descriptor: $0)
+                },
+                modelSelectionPersistence: @escaping (AppModelInstallDescriptor) -> Void = {
+                    AppModelInstallDescriptor.persistSelection($0)
+                },
                 memorySampler: AppMemorySampler = AppMemorySampler(),
                 settingsPersistenceEnabled: Bool = false) {
-        let directory = (modelDirectory ?? AppModelLocation.defaultURL()).standardizedFileURL
+        let resolvedInstaller = installer ?? installerFactory(.selected)
+        let directory = (modelDirectory ?? AppModelLocation.defaultURL(
+            descriptor: resolvedInstaller.descriptor)).standardizedFileURL
         let installETAClock = SuspendingClock()
         let settings = settingsPersistenceEnabled
             ? MacAppSettingsFileStore.loadOrCreate(forModelDirectory: directory)
@@ -84,7 +94,9 @@ public final class AppModel {
         self.topP = settings.topP
         self.installationStatus = AppModelInstallationProbe.status(at: directory)
         self.client = client
-        self.installer = installer
+        self.installer = resolvedInstaller
+        self.installerFactory = installerFactory
+        self.modelSelectionPersistence = modelSelectionPersistence
         self.memorySampler = memorySampler
         self.settingsPersistenceEnabled = settingsPersistenceEnabled
         self.installETAClock = installETAClock
@@ -137,6 +149,18 @@ public final class AppModel {
     }
 
     public var canCancelInstall: Bool { installState.canCancel }
+
+    public var canSelectInstallDescriptor: Bool {
+        !isInstallingModel && !isRunning && !loadState.isLoading
+    }
+
+    public func selectInstallDescriptor(_ descriptor: AppModelInstallDescriptor) {
+        guard canSelectInstallDescriptor, descriptor != installDescriptor else { return }
+        installer.cancel()
+        installer = installerFactory(descriptor)
+        modelSelectionPersistence(descriptor)
+        setModelURL(AppModelLocation.defaultURL(descriptor: descriptor))
+    }
 
     public var installDownloadedBytes: UInt64? {
         guard case .copyingPayload(let reused, let downloaded, let total) = installState else {

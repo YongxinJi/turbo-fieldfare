@@ -54,6 +54,8 @@ public struct AppModelInstallDescriptor: Equatable, Sendable {
         rangeStagingBytes: UInt64(RemoteChunkPolicy.defaultBytes),
         reserveBytes: 1_073_741_824)
 
+    public static let all: [AppModelInstallDescriptor] = [.qwen36, .default]
+
     /// The shipped descriptor for a model family, if one exists.
     public static func descriptor(for family: ModelFamily) -> AppModelInstallDescriptor? {
         switch family {
@@ -71,18 +73,33 @@ public struct AppModelInstallDescriptor: Equatable, Sendable {
         self == .qwen36 ? "qwen3.6-35b-a3b" : "gemma-4-26b-a4b-it"
     }
 
-    /// The descriptor the app products select at launch. Defaults to Gemma 4.
-    /// `TURBO_FIELDFARE_MODEL=qwen36` in the environment wins; otherwise the
-    /// persisted preference (`defaults write TurboFieldfare model qwen36`)
-    /// applies, so GUI launches without an environment also select Qwen.
+    public var selectionName: String {
+        self == .qwen36 ? "qwen36" : "gemma4"
+    }
+
     public static var selected: AppModelInstallDescriptor {
         let environmentValue = ProcessInfo.processInfo.environment["TURBO_FIELDFARE_MODEL"]
         let preferenceValue = UserDefaults(suiteName: "TurboFieldfare")?
             .string(forKey: "model")
+        return selection(environmentValue: environmentValue,
+                         preferenceValue: preferenceValue)
+    }
+
+    public static func selection(environmentValue: String?,
+                                 preferenceValue: String?) -> AppModelInstallDescriptor {
         switch environmentValue ?? preferenceValue {
-        case "qwen36": return .qwen36
-        default: return .default
+        case "gemma4": return .default
+        default: return .qwen36
         }
+    }
+
+    public static func named(_ selectionName: String) -> AppModelInstallDescriptor? {
+        all.first { $0.selectionName == selectionName }
+    }
+
+    public static func persistSelection(_ descriptor: AppModelInstallDescriptor) {
+        UserDefaults(suiteName: "TurboFieldfare")?
+            .set(descriptor.selectionName, forKey: "model")
     }
 }
 

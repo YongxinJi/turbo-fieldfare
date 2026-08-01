@@ -132,9 +132,10 @@ swift build -c release
 
 Build the complete package so the app and its sibling server are both
 available. When launched from this checkout, the app stores Gemma in
-`scratch/gemma4.gturbo` or Qwen in `scratch/qwen36.gturbo`. Gemma remains the
-upstream-compatible default; set `TURBO_FIELDFARE_MODEL=qwen36` or run
-`defaults write TurboFieldfare model qwen36` before launch to select Qwen.
+`scratch/gemma4.gturbo` or Qwen in `scratch/qwen36.gturbo`. Choose the model in
+the installer screen; the app defaults to Qwen and remembers the selection for
+future launches. `TURBO_FIELDFARE_MODEL=gemma4` remains available for scripted
+launches that need an explicit override.
 
 To create a drag-to-Applications disk image:
 
@@ -377,9 +378,9 @@ swift run -c release TurboFieldfareCLI \
   --messages-file messages.json
 ```
 
-The Mac app selects Qwen with `TURBO_FIELDFARE_MODEL=qwen36` in the
-environment; the server auto-detects the installed model and serves it as
-`qwen3.6-35b-a3b` with the ChatML template and Qwen tool-call format.
+The Mac app selects Qwen by default and exposes both supported models in the
+installer screen. The server auto-detects the installed model and serves Qwen
+as `qwen3.6-35b-a3b` with the ChatML template and Qwen tool-call format.
 
 Measured on an M5 following the
 [community benchmark protocol](docs/COMMUNITY_BENCHMARKS.md) — the three frozen

@@ -80,6 +80,21 @@ without horizontal scrolling.
 - **States:** native hover, focus, press, disabled, and keyboard behavior.
 - **Accessibility:** visible labels describe the action without relying on icons.
 
+### Model Selection Row
+
+- **Structure:** a visible `Model` label and native macOS menu picker inside the
+  installer utility card, before storage and path details.
+- **Options:** Qwen3.6 35B-A3B and Gemma 4 26B-A4B, identified by their complete
+  display names rather than internal aliases.
+- **States:** editable before a download starts and after it is paused or
+  cancelled; disabled throughout install, discard, load, and generation work.
+- **Persistence:** the selected model is remembered for future launches. Qwen3.6
+  is the fork default when no explicit environment or saved preference exists.
+- **Isolation:** switching selects that model's own install path and resume
+  checkpoint; it never relabels or reuses another model's partial download.
+- **Accessibility:** the picker has a visible label, exposes the selected model,
+  and provides a hint when switching is unavailable during active work.
+
 ### Server Configuration Card
 
 - **Structure:** native pickers, toggles, sliders, and steppers grouped by

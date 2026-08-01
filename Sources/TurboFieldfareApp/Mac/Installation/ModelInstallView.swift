@@ -51,6 +51,19 @@ struct ModelInstallView: View {
 
     private var storageCard: some View {
         VStack(spacing: 12) {
+            Picker("Model", selection: modelSelection) {
+                ForEach(AppModelInstallDescriptor.all, id: \.selectionName) { descriptor in
+                    Text(descriptor.displayName).tag(descriptor.selectionName)
+                }
+            }
+            .pickerStyle(.menu)
+            .disabled(!model.canSelectInstallDescriptor)
+            .accessibilityHint(model.canSelectInstallDescriptor
+                ? "Select the model to download and run"
+                : "Model selection is unavailable during active work")
+
+            Divider()
+
             if let requirement = model.installRequirement {
                 StorageRow(label: "Space required",
                            value: MetricFormat.storage(requirement.requiredBytes))
@@ -88,6 +101,17 @@ struct ModelInstallView: View {
                         .stroke(.separator.opacity(0.5), lineWidth: 0.5)
                 }
         }
+    }
+
+    private var modelSelection: Binding<String> {
+        Binding(
+            get: { model.installDescriptor.selectionName },
+            set: { selectionName in
+                guard let descriptor = AppModelInstallDescriptor.named(selectionName) else {
+                    return
+                }
+                model.selectInstallDescriptor(descriptor)
+            })
     }
 
     @ViewBuilder

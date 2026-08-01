@@ -88,6 +88,39 @@ import TurboFieldfareRepackCore
   }
 
   @MainActor
+  @Test func modelSelectionDefaultsToQwenAndHonorsExplicitGemma() {
+    #expect(AppModelInstallDescriptor.all == [.qwen36, .default])
+    #expect(AppModelInstallDescriptor.selection(
+      environmentValue: nil,
+      preferenceValue: nil) == .qwen36)
+    #expect(AppModelInstallDescriptor.selection(
+      environmentValue: nil,
+      preferenceValue: "gemma4") == .default)
+    #expect(AppModelInstallDescriptor.selection(
+      environmentValue: "gemma4",
+      preferenceValue: "qwen36") == .default)
+  }
+
+  @MainActor
+  @Test func selectingModelReplacesInstallerPathAndPersistsChoice() {
+    let initialInstaller = MockModelInstallerClient(descriptor: .default)
+    var persistedSelections: [AppModelInstallDescriptor] = []
+    let model = AppModel(
+      modelDirectory: temporaryInstallPath("model-selection"),
+      client: MockLifecycleInferenceClient(),
+      installer: initialInstaller,
+      installerFactory: { MockModelInstallerClient(descriptor: $0) },
+      modelSelectionPersistence: { persistedSelections.append($0) })
+
+    model.selectInstallDescriptor(.qwen36)
+
+    #expect(initialInstaller.cancelCalled)
+    #expect(model.installDescriptor == .qwen36)
+    #expect(model.modelPathText.hasSuffix("/scratch/qwen36.gturbo"))
+    #expect(persistedSelections == [.qwen36])
+  }
+
+  @MainActor
   @Test func insufficientSpaceDisablesInstallAndExposesShortfall() {
     let requirement = AppModelInstallRequirement(
       probePath: "/volume",
@@ -302,6 +335,10 @@ import TurboFieldfareRepackCore
     model.installModel()
     try await waitUntil { model.installState == .downloadingMetadata }
 
+    #expect(!model.canSelectInstallDescriptor)
+    model.selectInstallDescriptor(.qwen36)
+    #expect(model.installDescriptor == .default)
+
     model.cancelInstall()
     #expect(installer.cancelCalled)
     try await waitUntil { installer.cancellationAcknowledgementPending }
@@ -313,6 +350,7 @@ import TurboFieldfareRepackCore
 
     #expect(model.loadState == .notLoaded)
     #expect(model.canInstallModel)
+    #expect(model.canSelectInstallDescriptor)
   }
 
   private func temporaryInstallPath(_ tag: String) -> URL {
