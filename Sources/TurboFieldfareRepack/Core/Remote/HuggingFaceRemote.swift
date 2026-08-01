@@ -1,5 +1,42 @@
 import Foundation
 
+public enum HuggingFaceEndpoint {
+    public static let official = URL(string: "https://huggingface.co")!
+
+    public static func resolve(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) throws -> URL {
+        guard let value = environment["HF_ENDPOINT"], !value.isEmpty else {
+            return official
+        }
+        guard var components = URLComponents(string: value),
+              components.scheme?.lowercased() == "https",
+              components.host != nil,
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil,
+              components.path.isEmpty || components.path == "/" else {
+            throw RepackError.configurationInvalid(
+                detail: "HF_ENDPOINT must be an HTTPS origin without credentials, path, query, or fragment")
+        }
+        components.scheme = "https"
+        components.path = ""
+        guard let url = components.url else {
+            throw RepackError.configurationInvalid(detail: "HF_ENDPOINT is invalid")
+        }
+        return url
+    }
+
+    public static func token(
+        for baseURL: URL,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String? {
+        guard baseURL.host?.lowercased() == official.host else { return nil }
+        return environment["HF_TOKEN"]
+    }
+}
+
 public struct RemoteFileInfo: Sendable, Hashable {
     public let filename: String
     public let resolvedCommit: String
@@ -29,7 +66,7 @@ public struct HuggingFaceRemoteSource: Sendable {
                 resolvedCommit: String? = nil,
                 token: String? = nil,
                 downloadSession: RemoteDownloadSession = RemoteDownloadSession(),
-                baseURL: URL = URL(string: "https://huggingface.co")!,
+                baseURL: URL = HuggingFaceEndpoint.official,
                 tempDirectory: String = NSTemporaryDirectory(),
                 retryPolicy: RemoteRetryPolicy = RemoteRetryPolicy()) {
         self.repoID = repoID

@@ -161,12 +161,15 @@ private func run(_ values: [String]) async -> Int32 {
 
     guard let output = arguments.output else { return 2 }
     let source = arguments.model
-    let options = source.installOptions(
-        outputDirectory: URL(fileURLWithPath: output),
-        overwrite: arguments.overwrite,
-        token: ProcessInfo.processInfo.environment["HF_TOKEN"],
-        resume: arguments.resume)
     do {
+        let environment = ProcessInfo.processInfo.environment
+        let baseURL = try HuggingFaceEndpoint.resolve(environment: environment)
+        let options = source.installOptions(
+            outputDirectory: URL(fileURLWithPath: output),
+            overwrite: arguments.overwrite,
+            token: HuggingFaceEndpoint.token(for: baseURL, environment: environment),
+            baseURL: baseURL,
+            resume: arguments.resume)
         let result = try await RemoteStreamingRepacker(options: options).run()
         print("Installed \(source.displayName)")
         print("Source revision: \(result.resolvedCommit)")

@@ -157,6 +157,12 @@ required byte ranges from the pinned Hugging Face revision and repacks them
 directly into the `.gturbo` layout as they arrive. This avoids a second full
 checkpoint on disk and keeps scratch memory bounded.
 
+Set `HF_ENDPOINT` to an HTTPS mirror origin to use a compatible Hugging Face
+mirror, for example `HF_ENDPOINT=https://hf-mirror.com`. The installer still
+requires the pinned revision, source-index fingerprint, file sizes, and exact
+Range responses. For safety, `HF_TOKEN` is sent only to the official
+`huggingface.co` endpoint and never to a mirror.
+
 The first installation transfers about 15 GB for Gemma or 19.5 GB for Qwen
 through bounded Hugging Face range requests. Network speed and Hugging Face
 response times vary, so it can take a while. The completed `.gturbo`

@@ -19,6 +19,7 @@ public struct SupportedModelSource: Sendable, Equatable {
     public func installOptions(outputDirectory: URL,
                                overwrite: Bool,
                                token: String?,
+                               baseURL: URL = HuggingFaceEndpoint.official,
                                resume: Bool = false)
         -> RemoteStreamingRepackOptions {
         RemoteStreamingRepackOptions(
@@ -29,7 +30,8 @@ public struct SupportedModelSource: Sendable, Equatable {
             requireKnownSource: true,
             minFreeReserveBytes: reserveBytes,
             overwrite: overwrite,
-            resume: resume)
+            resume: resume,
+            baseURL: baseURL)
     }
 
     public static let gemma4 = SupportedModelSource(

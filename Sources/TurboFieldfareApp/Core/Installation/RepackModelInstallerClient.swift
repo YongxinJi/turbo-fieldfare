@@ -26,17 +26,20 @@ public final class RepackModelInstallerClient: AppModelInstallerClient, Sendable
     public init(descriptor: AppModelInstallDescriptor = .default) {
         self.descriptor = descriptor
         self.runInstall = { outputDirectory, progress in
+            let environment = ProcessInfo.processInfo.environment
+            let baseURL = try HuggingFaceEndpoint.resolve(environment: environment)
             let paths = try RemoteInstallPaths(outputDirectory: outputDirectory.path)
             let resume = FileManager.default.fileExists(atPath: paths.checkpointFile)
             let options = RemoteStreamingRepackOptions(
                 repoID: descriptor.repoID,
                 revision: descriptor.revision,
                 outputDir: outputDirectory.path,
-                token: ProcessInfo.processInfo.environment["HF_TOKEN"],
+                token: HuggingFaceEndpoint.token(for: baseURL, environment: environment),
                 requireKnownSource: true,
                 minFreeReserveBytes: descriptor.reserveBytes,
                 overwrite: true,
-                resume: resume)
+                resume: resume,
+                baseURL: baseURL)
             let result = try await RemoteStreamingRepacker(options: options).run(progress: progress)
             return URL(fileURLWithPath: result.outputDir).standardizedFileURL
         }
